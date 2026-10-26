@@ -1,6 +1,6 @@
 import { command, demoState, rosterState, DEFAULT_PASSWORD } from './domain';
-// `npm run demo` runs Vite in "demo" mode: separate storage so synthetic data never touches real local data.
-export const DEMO=import.meta.env.MODE==='demo';
+// `npm run demo` (or ?demo on the live site, temporarily) uses separate storage so synthetic data never touches real data.
+export const DEMO=import.meta.env.MODE==='demo'||new URLSearchParams(location.search).has('demo');
 const KEY=DEMO?'phlop:demo:v1':'phlop:data:v1',AUTH=DEMO?'phlop:demo-auth:v1':'phlop:auth:v1';
 export function load(){
   const raw=localStorage.getItem(KEY);
