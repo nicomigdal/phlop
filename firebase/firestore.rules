@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function group(gid) { return get(/databases/$(database)/documents/groups/$(gid)).data; }
+    function member(gid) {
+      return request.auth != null && (request.auth.uid == group(gid).ownerUid ||
+        (request.auth.token.email_verified == true && request.auth.token.email in group(gid).allowedEmails));
+    }
+    match /groups/{gid} {
+      allow read: if member(gid);
+      allow create, delete: if false;
+      allow update: if member(gid) && (
+        (request.auth.uid == resource.data.ownerUid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedEmails']) &&
+          request.resource.data.allowedEmails is list && request.resource.data.allowedEmails.size() <= 50)
+        ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sequence','lastEvent','updatedAt']) &&
+          request.resource.data.sequence == resource.data.sequence + 1 &&
+          request.resource.data.lastEvent is string &&
+          request.resource.data.updatedAt == request.time &&
+          !exists(/databases/$(database)/documents/groups/$(gid)/events/$(request.resource.data.lastEvent)) &&
+          getAfter(/databases/$(database)/documents/groups/$(gid)/events/$(request.resource.data.lastEvent)).data.sequence == request.resource.data.sequence &&
+          getAfter(/databases/$(database)/documents/groups/$(gid)/events/$(request.resource.data.lastEvent)).data.actorId == request.auth.uid)
+      );
+      match /events/{eid} {
+        allow read: if member(gid);
+        allow update, delete: if false;
+        allow create: if member(gid) &&
+          request.resource.data.keys().hasOnly(['actorId','action','sequence','date']) &&
+          request.resource.data.actorId == request.auth.uid &&
+          request.resource.data.date == request.time &&
+          request.resource.data.action is map &&
+          request.resource.data.action.size() <= 16 &&
+          request.resource.data.action.type in ['register','profile','create','start','join','buyin','close','correct','request','resolve','remind','role','host'] &&
+          request.resource.data.sequence == group(gid).sequence + 1 &&
+          (group(gid).sequence > 0 || (request.auth.uid == group(gid).ownerUid && request.resource.data.action.type == 'register')) &&
+          getAfter(/databases/$(database)/documents/groups/$(gid)).data.lastEvent == eid &&
+          getAfter(/databases/$(database)/documents/groups/$(gid)).data.sequence == request.resource.data.sequence;
+      }
+    }
+  }
+}
