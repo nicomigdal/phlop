@@ -1,0 +1,2 @@
+import React,{useEffect,useState} from 'react';
+export default function Elapsed({start,status}){const [now,setNow]=useState(Date.now());useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),30000);return()=>clearInterval(id)},[]);if(status!=='active')return null;const minutes=Math.max(0,Math.floor((now-Date.parse(start))/60000));return <span> · {Math.floor(minutes/60)} שעות ו־{minutes%60} דקות בשולחן</span>}
