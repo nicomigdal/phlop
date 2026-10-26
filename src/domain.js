@@ -80,7 +80,7 @@ export function command(state, actorId, action, operationId=uid(), now=new Date(
       d.users.push({id:actorId,name:member.name,phone:member.phone,role:member.admin||!d.users.length?'admin':'user',joined:now,color:d.users.length%6,avatar:'',passwordSet:false});break;
     }
     case 'password': actor.passwordSet=true;break;
-    case 'profile': check(action.name?.trim().length>=2&&action.name.length<=40,'השם קצר מדי או ארוך מדי');actor.name=action.name.trim();if(action.avatar!==undefined){check(/^$|^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(action.avatar)&&action.avatar.length<200000,'התמונה אינה תקינה או גדולה מדי');actor.avatar=action.avatar;}break;
+    case 'profile': check(action.name?.trim().length>=2&&action.name.length<=40,'השם קצר מדי או ארוך מדי');actor.name=action.name.trim();if(action.avatar!==undefined){check(/^$|^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(action.avatar)&&action.avatar.length<200000,'התמונה אינה תקינה או גדולה מדי');actor.avatar=action.avatar;}if(action.bitLink!==undefined){check(/^$|^https:\/\/(www\.)?bitpay\.co\.il\/app\/me\/[A-Za-z0-9-]{4,80}$/.test(action.bitLink),'קישור ביט אישי נראה כך: https://www.bitpay.co.il/app/me/…');actor.bitLink=action.bitLink;}break;
     case 'create': {
       check(!d.sessions.some(x=>x.id===action.id),'ישיבה כבר קיימת');amount(action.amount);
       check(Number.isFinite(Date.parse(action.date)),'תאריך לא תקין');
