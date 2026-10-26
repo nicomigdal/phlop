@@ -1,4 +1,7 @@
-import { command, replay } from './domain';
+import { command, replay, ROSTER, DEFAULT_PASSWORD, normalizePhone } from './domain';
+
+export const accountEmail=phone=>`${phone}@phlop.app`;
+const secret=password=>`phlop-${password}`;
 
 // Ordered immutable commands are the source of truth. Never trust a client-written balance.
 // Firestore verifies identity, membership, immutable history and atomic sequencing.
@@ -42,18 +45,22 @@ export async function connectCloud({onAuth,onState,onError}) {
   authSDK.onAuthStateChanged(auth,u=>{if(!u){unsubscribe?.();unsubscribe=null;}onAuth(u)});
   return {
     send,
-    async subscribe(){unsubscribe?.();try{await ensureOwner();unsubscribe=dbSDK.onSnapshot(eventsQuery,snapshot=>{const {state,rejected}=replay(decode(snapshot),ownerId);onState(state);if(rejected.length)onError(Error(`${rejected.length} פעולות לא תקינות נדחו בחישוב היומן. יש לבדוק עם מנהל הקבוצה.`));},e=>onError(Error('אין גישה לקבוצה. יש לוודא שהאימייל שלך נוסף לרשימת החברים ושכללי Firebase פורסמו. '+e.code)));}catch(e){onError(e)}},
-    async login(email,password,name){
-      let result;
-      if(name){result=await authSDK.createUserWithEmailAndPassword(auth,email,password);await authSDK.updateProfile(result.user,{displayName:name});await authSDK.sendEmailVerification(result.user);}
-      else result=await authSDK.signInWithEmailAndPassword(auth,email,password);
-      if(!result.user.emailVerified){const group=await dbSDK.getDoc(metaRef).catch(()=>null);if(!group||group.data().ownerUid!==result.user.uid){await authSDK.signOut(auth);throw Error('נשלח קישור אימות לאימייל. יש לאמת את האימייל ולהיכנס שוב. אין צורך ב־SMS.');}}
+    async subscribe(){unsubscribe?.();try{await ensureOwner();unsubscribe=dbSDK.onSnapshot(eventsQuery,snapshot=>{const {state,rejected}=replay(decode(snapshot),ownerId);onState(state);if(rejected.length)onError(Error(`${rejected.length} פעולות לא תקינות נדחו בחישוב היומן. יש לבדוק עם מנהל הקבוצה.`));},e=>onError(Error('אין גישה לקבוצה. יש לוודא שמספר הטלפון שלך נוסף לרשימת החברים ושכללי Firebase פורסמו. '+e.code)));}catch(e){onError(e)}},
+    // Accounts are keyed by phone. Firebase needs an email and a 6+ character password, so both are derived.
+    async login(phone,password){
+      const member=ROSTER.find(r=>r.phone===normalizePhone(phone));if(!member)throw Error('מספר הטלפון אינו ברשימת המשתתפים');
+      const email=accountEmail(member.phone);let result;
+      try{result=await authSDK.signInWithEmailAndPassword(auth,email,secret(password));}
+      catch(e){
+        if(password!==DEFAULT_PASSWORD||!['auth/invalid-credential','auth/user-not-found','auth/invalid-login-credentials'].includes(e.code))throw Error('מספר הטלפון או הסיסמה שגויים');
+        try{result=await authSDK.createUserWithEmailAndPassword(auth,email,secret(password));}catch{throw Error('מספר הטלפון או הסיסמה שגויים');}
+      }
       const events=decode(await dbSDK.getDocsFromServer(eventsQuery));
       await ensureOwner();
-      if(!replay(events,ownerId).state.users.some(u=>u.id===result.user.uid))await send({type:'register',name:name||result.user.displayName||email.split('@')[0]});
+      if(!replay(events,ownerId).state.users.some(u=>u.id===result.user.uid))await send({type:'register',phone:member.phone});
     },
+    async changePassword(password){if(!auth.currentUser)throw Error('יש להתחבר מחדש');await authSDK.updatePassword(auth.currentUser,secret(password));await send({type:'password'});},
     logout:()=>authSDK.signOut(auth),
-    resetPassword:email=>authSDK.sendPasswordResetEmail(auth,email),
     async invite(email){const meta=await dbSDK.getDoc(metaRef);await dbSDK.updateDoc(metaRef,{allowedEmails:[...new Set([...meta.data().allowedEmails,email.trim().toLowerCase()])]});}
   };
 }

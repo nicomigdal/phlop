@@ -4,7 +4,7 @@ service cloud.firestore {
     function group(gid) { return get(/databases/$(database)/documents/groups/$(gid)).data; }
     function member(gid) {
       return request.auth != null && (request.auth.uid == group(gid).ownerUid ||
-        (request.auth.token.email_verified == true && request.auth.token.email in group(gid).allowedEmails));
+        request.auth.token.email in group(gid).allowedEmails);
     }
     match /groups/{gid} {
       allow read: if member(gid);
@@ -31,7 +31,7 @@ service cloud.firestore {
           request.resource.data.date == request.time &&
           request.resource.data.action is map &&
           request.resource.data.action.size() <= 16 &&
-          request.resource.data.action.type in ['register','profile','create','start','join','buyin','close','correct','request','resolve','remind','role','host'] &&
+          request.resource.data.action.type in ['register','password','profile','create','start','join','buyin','close','correct','request','resolve','remind','role','host'] &&
           request.resource.data.sequence == group(gid).sequence + 1 &&
           (group(gid).sequence > 0 || (request.auth.uid == group(gid).ownerUid && request.resource.data.action.type == 'register')) &&
           getAfter(/databases/$(database)/documents/groups/$(gid)).data.lastEvent == eid &&

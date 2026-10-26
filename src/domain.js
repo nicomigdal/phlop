@@ -1,4 +1,9 @@
 export const uid = () => crypto.randomUUID();
+// The fixed group of participants. Everyone starts with DEFAULT_PASSWORD and picks a new one on first login.
+export const ROSTER = [['ניקו','0506451339',true],['יובל','0556647869'],['דורון','0547748356'],['איתי','0546999387'],['כהן','0527238165'],['מייק','0524270746'],['נתי','0525070064'],['דני','0543104074'],['דרור','0532555633'],['מאיר','0538212162']].map(([name,phone,admin=false])=>({name,phone,admin}));
+export const DEFAULT_PASSWORD = '123';
+export const normalizePhone = v => String(v||'').replace(/\D/g,'').replace(/^972/,'0');
+export const localId = phone => `u${phone}`;
 export const money = (v, signed = false) => `${signed && v > 0 ? '+' : v < 0 ? '−' : ''}${(Math.abs(v) / 100).toLocaleString('he-IL', {maximumFractionDigits: 2})} ₪`;
 export const date = (v, time = false) => new Intl.DateTimeFormat('he-IL', {timeZone:'Asia/Jerusalem', day:'2-digit', month:'2-digit', year:'numeric', ...(time ? {hour:'2-digit',minute:'2-digit'} : {})}).format(new Date(v));
 export const month = v => israelDay(v).slice(0,7);
@@ -46,12 +51,15 @@ export function validateTransfers(results, transfers) {
   check(results.every(r=>balances[r.userId]===r.net),'תוכנית ההעברות אינה תואמת את התוצאות');
 }
 export function balance(state,a,b) {return state.entries.reduce((n,e)=>n+(e.from===a&&e.to===b?e.amount:e.from===b&&e.to===a?-e.amount:0),0);}
+export const place = (state,s) => s?.locationUserId ? `אצל ${state.users.find(u=>u.id===s.locationUserId)?.name||'—'}` : s?.location || '';
+export const sessionTitle = (state,s) => [date(s.date),place(state,s)].filter(Boolean).join(' · ');
 export function debts(state,id) {return state.users.filter(u=>u.id!==id).map(u=>({user:u,amount:balance(state,id,u.id)})).filter(d=>d.amount!==0);}
 export function statistics(state,id,from='',to='') {
   const ss=state.sessions.filter(s=>s.status==='closed'&&s.results.some(r=>r.userId===id)&&(!from||israelDay(s.date)>=from)&&(!to||israelDay(s.date)<=to)).sort((a,b)=>a.date.localeCompare(b.date));
   const rr=ss.map(s=>s.results.find(r=>r.userId===id));const sum=key=>rr.reduce((n,r)=>n+r[key],0);const wins=rr.filter(r=>r.net>0),losses=rr.filter(r=>r.net<0);
   let ws=0,ls=0,maxW=0,maxL=0;rr.forEach(r=>{ws=r.net>0?ws+1:0;ls=r.net<0?ls+1:0;maxW=Math.max(maxW,ws);maxL=Math.max(maxL,ls);});
-  return {sessions:ss,results:rr,total:sum('net'),buyins:sum('buyin'),count:rr.length,wins:wins.length,losses:losses.length,winRate:rr.length?Math.round(wins.length/rr.length*100):0,average:rr.length?Math.round(sum('net')/rr.length):0,averageLoss:losses.length?Math.round(losses.reduce((n,r)=>n+r.net,0)/losses.length):0,best:rr.length?Math.max(...rr.map(r=>r.net)):0,worst:rr.length?Math.min(...rr.map(r=>r.net)):0,rebuys:ss.reduce((n,s)=>n+Math.max(0,s.buyins.filter(b=>b.userId===id).length-1),0),maxW,maxL};
+  const places=Object.values(ss.reduce((obj,s,i)=>{const key=s.locationUserId||'text:'+(s.location||'');obj[key]??={key,label:place(state,s)||'ללא מיקום',net:0,count:0};obj[key].net+=rr[i].net;obj[key].count++;return obj;},{})).sort((a,b)=>b.net-a.net);
+  return {sessions:ss,places,results:rr,total:sum('net'),buyins:sum('buyin'),count:rr.length,wins:wins.length,losses:losses.length,winRate:rr.length?Math.round(wins.length/rr.length*100):0,average:rr.length?Math.round(sum('net')/rr.length):0,averageLoss:losses.length?Math.round(losses.reduce((n,r)=>n+r.net,0)/losses.length):0,best:rr.length?Math.max(...rr.map(r=>r.net)):0,worst:rr.length?Math.min(...rr.map(r=>r.net)):0,rebuys:ss.reduce((n,s)=>n+Math.max(0,s.buyins.filter(b=>b.userId===id).length-1),0),maxW,maxL};
 }
 export function command(state, actorId, action, operationId=uid(), now=new Date().toISOString()) {
   check(operationId && typeof operationId==='string','חסר מזהה פעולה');
@@ -67,14 +75,16 @@ export function command(state, actorId, action, operationId=uid(), now=new Date(
   const before=s?structuredClone(s):null;
   switch(action.type){
     case 'register': {
-      check(!d.users.some(u=>u.id===actorId),'המשתמש כבר קיים');check(typeof action.name==='string'&&action.name.trim().length>=2&&action.name.length<=40,'יש להזין שם באורך 2–40 תווים');
-      d.users.push({id:actorId,name:action.name.trim(),role:d.users.length?'user':'admin',joined:now,color:d.users.length%6,avatar:''});break;
+      check(!d.users.some(u=>u.id===actorId),'המשתמש כבר קיים');const member=ROSTER.find(r=>r.phone===action.phone);check(member,'מספר הטלפון אינו ברשימת המשתתפים');check(!d.users.some(u=>u.phone===member.phone),'מספר הטלפון כבר רשום');
+      d.users.push({id:actorId,name:member.name,phone:member.phone,role:member.admin||!d.users.length?'admin':'user',joined:now,color:d.users.length%6,avatar:'',passwordSet:false});break;
     }
+    case 'password': actor.passwordSet=true;break;
     case 'profile': check(action.name?.trim().length>=2&&action.name.length<=40,'השם קצר מדי או ארוך מדי');actor.name=action.name.trim();if(action.avatar!==undefined){check(/^$|^https:\/\//.test(action.avatar)&&action.avatar.length<1000,'יש להזין כתובת תמונה מאובטחת');actor.avatar=action.avatar;}break;
     case 'create': {
-      check(action.name?.trim()&&action.name.length<=80,'יש להזין שם ישיבה');check(!d.sessions.some(x=>x.id===action.id),'ישיבה כבר קיימת');amount(action.amount);
+      check(!d.sessions.some(x=>x.id===action.id),'ישיבה כבר קיימת');amount(action.amount);
       check(Number.isFinite(Date.parse(action.date)),'תאריך לא תקין');
-      s={id:action.id,name:action.name.trim(),host:actorId,date:action.date,notes:(action.notes||'').slice(0,500),code:action.code,status:action.waiting?'waiting':'active',players:[actorId],buyins:[{id:operationId,userId:actorId,amount:action.amount,date:now}],results:[],transfers:[],version:1};d.sessions.push(s);break;
+      if(action.locationUserId)user(action.locationUserId);else check(typeof action.location==='string'&&action.location.trim().length>=2&&action.location.length<=60,'יש לבחור או להזין מיקום לישיבה');
+      s={id:action.id,host:actorId,date:action.date,...(action.locationUserId?{locationUserId:action.locationUserId}:{location:action.location.trim()}),status:action.waiting?'waiting':'active',players:[actorId],buyins:[{id:operationId,userId:actorId,amount:action.amount,date:now}],results:[],transfers:[],version:1};d.sessions.push(s);break;
     }
     case 'start': host();check(s?.status==='waiting','הישיבה כבר התחילה');s.status='active';break;
     case 'join': check(s&&['waiting','active'].includes(s.status),'הישיבה אינה פתוחה להצטרפות');check(!s.players.includes(actorId),'כבר הצטרפת לישיבה');amount(action.amount);s.players.push(actorId);s.buyins.push({id:operationId,userId:actorId,amount:action.amount,date:now});break;
@@ -86,7 +96,7 @@ export function command(state, actorId, action, operationId=uid(), now=new Date(
       if(action.type==='correct')for(const t of s.transfers)entry({from:t.to,to:t.from,amount:t.amount,reason:action.reason},'correction',s.id);
       for(const t of transfers)entry(t,action.type==='correct'?'correction':'game',s.id);
       s.results=results;s.transfers=transfers;s.status='closed';s.closedAt=now;
-      for(const id of s.players)notify(id,`${action.type==='correct'?'תוקנו':'פורסמו'} תוצאות ${s.name}`);break;
+      for(const id of s.players)notify(id,`${action.type==='correct'?'תוקנו':'פורסמו'} תוצאות הערב ${sessionTitle(d,s)}`);break;
     }
     case 'request': {
       check(['manual','payment'].includes(action.kind),'סוג בקשה לא תקין');user(action.from);user(action.to);check(action.from!==action.to,'לא ניתן ליצור חוב לעצמך');check([action.from,action.to].includes(actorId),'אין הרשאה לבקש פעולה עבור אחרים');amount(action.amount);check(action.reason?.trim()||action.kind==='payment','יש לציין סיבה לחוב');
@@ -111,13 +121,29 @@ export function command(state, actorId, action, operationId=uid(), now=new Date(
   return d;
 }
 export function replay(events,ownerId) {let state=emptyState(); const rejected=[]; for(const event of events){try{if(ownerId&&!state.users.some(u=>u.id===ownerId))check(event.actorId===ownerId&&event.action.type==='register','בעל הקבוצה חייב להיות המשתמש הראשון');state=command(state,event.actorId,event.action,event.id,event.date);}catch(e){rejected.push({id:event.id,error:e.message});}}return {state,rejected};}
+// Every participant from the roster, registered with a deterministic id (used by local and demo modes).
+export function rosterState(now='2026-10-01T09:00:00.000Z') {let d=emptyState();ROSTER.forEach((r,i)=>{d=command(d,localId(r.phone),{type:'register',phone:r.phone},`seed-${i}`,now);});return d;}
 export function demoState() {
   let d=emptyState();let k=0;const run=(a,action,date)=>{d=command(d,a,action,`demo-${++k}`,date||'2026-10-26T16:00:00.000Z');};
-  ['ניקו','נתי','דניאל','יובל','עומר','איתי'].forEach((name,i)=>run(`p${i}`,{type:'register',name},'2026-07-01T12:00:00.000Z'));
-  const history=[['2026-08-20',150,-100,-50,0],['2026-08-27',-80,150,-50,-20],['2026-09-03',220,-120,-50,-50],['2026-09-10',-100,-100,150,50],['2026-09-17',180,-50,-80,-50],['2026-09-24',130,-100,50,-80],['2026-10-01',250,-150,-50,-50],['2026-10-08',-100,200,-50,-50],['2026-10-15',320,-150,-100,-70],['2026-10-22',180,-80,-50,-50]];
-  history.forEach(([day,...nets],i)=>{const id=`h${i}`,dt=day+'T18:00:00.000Z';run('p0',{type:'create',id,name:i%2?'חמישי אצל ניקו':'פוקר עם החבר׳ה',date:dt,code:`HIS${i}`,amount:30000},dt);for(let p=1;p<4;p++)run(`p${p}`,{type:'join',sessionId:id,amount:30000},dt);const s=d.sessions.find(s=>s.id===id);run('p0',{type:'close',sessionId:id,version:s.version,finals:Object.fromEntries(nets.map((v,p)=>[`p${p}`,30000+v*100]))},dt);});
-  for(const debt of debts(d,'p0').filter(x=>x.amount<0)){const value=-debt.amount-20000;if(value>0){run(debt.user.id,{type:'request',kind:'payment',from:debt.user.id,to:'p0',amount:value,reason:'העברה בביט'});const r=d.requests.at(-1);run('p0',{type:'resolve',id:r.id,status:'approved'});}}
-  run('p0',{type:'create',id:'live',name:'החמישייה הפותחת',date:'2026-10-26T16:00:00.000Z',amount:20000,code:'FLOP26',notes:'הקלפים על השולחן. הערב אצל ניקו ♠'});
-  for(let p=1;p<6;p++)run(`p${p}`,{type:'join',sessionId:'live',amount:20000});run('p1',{type:'buyin',sessionId:'live',userId:'p1',amount:10000});run('p2',{type:'buyin',sessionId:'live',userId:'p2',amount:5000});
-  run('p1',{type:'request',kind:'payment',from:'p1',to:'p0',amount:10000,reason:'שלחתי בביט, תבדוק שקיבלת 🙌'});run('p3',{type:'request',kind:'manual',from:'p0',to:'p3',amount:6000,reason:'הפיצה של הערב'});return d;
+  const ids=ROSTER.map(r=>localId(r.phone));
+  ROSTER.forEach((r,i)=>{run(ids[i],{type:'register',phone:r.phone},'2026-07-01T12:00:00.000Z');run(ids[i],{type:'password'},'2026-07-01T12:00:00.000Z');});
+  let seed=20260826;const rand=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+  const outside=['הצימר בגליל','המשרד של מייק','חוף הבונים'];
+  for(let i=0;i<16;i++){
+    const day=new Date(Date.UTC(2026,7,6)+i*5*86400000).toISOString().slice(0,10),dt=day+'T18:00:00.000Z',id=`h${i}`;
+    const players=ids.filter((p,j)=>j===0||rand()<.6).slice(0,8);while(players.length<4)players.push(ids.find(p=>!players.includes(p)));
+    const host=players[Math.floor(rand()*players.length)];const where=i%5===4?{location:outside[i%3]}:{locationUserId:rand()<.5?host:players[Math.floor(rand()*players.length)]};
+    run(host,{type:'create',id,date:dt,amount:20000,...where},dt);for(const p of players)if(p!==host)run(p,{type:'join',sessionId:id,amount:20000},dt);
+    const rebuys=players.filter(()=>rand()<.3);for(const p of rebuys)run(host,{type:'buyin',sessionId:id,userId:p,amount:10000},dt);
+    const s=d.sessions.find(s=>s.id===id);let finals;
+    do{const nets=players.slice(0,-1).map(p=>Math.round((rand()*2-1)*buyTotal(s,p)/1000)*1000);const last=-nets.reduce((n,v)=>n+v,0);nets.push(last);finals=Object.fromEntries(players.map((p,j)=>[p,buyTotal(s,p)+nets[j]]));}while(Object.values(finals).some(v=>v<0||v>100000000));
+    run(host,{type:'close',sessionId:id,version:s.version,finals},dt);
+  }
+  // Settle roughly half of the open balances so the debt board shows a realistic mix.
+  ids.forEach((a,i)=>ids.slice(i+1).forEach((b,j)=>{const v=balance(d,a,b);if(!v||(i+j)%2===0)return;const [from,to]=v>0?[a,b]:[b,a];run(from,{type:'request',kind:'payment',from,to,amount:Math.abs(v),reason:'העברה בביט'},'2026-10-24T10:00:00.000Z');run(to,{type:'resolve',id:d.requests.at(-1).id,status:'approved'},'2026-10-24T11:00:00.000Z');}));
+  const [nico,yuval,doron,itay,cohen,mike]=ids;
+  run(yuval,{type:'create',id:'live',date:'2026-10-26T16:00:00.000Z',amount:20000,locationUserId:yuval});
+  for(const p of [doron,itay,cohen,mike])run(p,{type:'join',sessionId:'live',amount:20000});run(yuval,{type:'buyin',sessionId:'live',userId:doron,amount:10000});run(itay,{type:'buyin',sessionId:'live',userId:itay,amount:5000});
+  const debtor=debts(d,nico).find(x=>x.amount<0);if(debtor)run(debtor.user.id,{type:'request',kind:'payment',from:debtor.user.id,to:nico,amount:Math.min(-debtor.amount,10000),reason:'שלחתי בביט, תבדוק שקיבלת 🙌'});
+  run(doron,{type:'request',kind:'manual',from:nico,to:doron,amount:6000,reason:'הפיצה של הערב'});return d;
 }
